@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import filedialog, simpledialog, messagebox
 import os
+import speech_recognition as sr
+import threading
 
 NOTES_DIR = "Notes"
 if not os.path.exists(NOTES_DIR):
@@ -11,6 +13,9 @@ class StickyNote:
         self.root = root
         self.filename = filename
         self.is_pinned = False
+        self.is_listening = False
+        self.recognizer = sr.Recognizer()
+        self.microphone = sr.Microphone()
 
         # Set window title
         self.root.title(os.path.basename(filename))
@@ -41,14 +46,23 @@ class StickyNote:
         self.button_frame = tk.Frame(self.root, bg="#f7f2a3")
         self.button_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
 
-        self.save_button = tk.Button(self.button_frame, text="Save", command=self.save_note, bg="#d3d3d3")  # Light gray background
+        self.save_button = tk.Button(self.button_frame, text="Save", command=self.save_note, bg="#d3d3d3")
         self.save_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
-        self.save_as_button = tk.Button(self.button_frame, text="Save As", command=self.save_as, bg="#d3d3d3")  # Light gray background
+        self.save_as_button = tk.Button(self.button_frame, text="Save As", command=self.save_as, bg="#d3d3d3")
         self.save_as_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
-        self.pin_button = tk.Button(self.button_frame, text="Pin", command=self.toggle_pin, bg="#d3d3d3")  # Light gray background
+        self.pin_button = tk.Button(self.button_frame, text="Pin", command=self.toggle_pin, bg="#d3d3d3")
         self.pin_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+        self.voice_button = tk.Button(self.button_frame, text="Start Voice-to-Text", command=self.toggle_voice, bg="#d3d3d3")
+        self.voice_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+        # Create a StringVar for device selection
+        self.device_var = tk.StringVar()
+
+        self.device_menu = tk.OptionMenu(self.button_frame, self.device_var, *self.get_device_list(), command=self.select_device)
+        self.device_menu.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
         # Load note if it exists
         if os.path.exists(self.filename):
@@ -79,6 +93,62 @@ class StickyNote:
         self.is_pinned = not self.is_pinned
         self.root.attributes("-topmost", self.is_pinned)
 
+    def toggle_voice(self):
+        """Starts or stops the voice-to-text."""
+        if not self.is_listening:
+            self.is_listening = True
+            self.voice_button.config(text="Stop Voice-to-Text")
+            # Run the voice listening in a separate thread to avoid freezing the GUI
+            threading.Thread(target=self.listen_for_audio, daemon=True).start()
+        else:
+            self.is_listening = False
+            self.voice_button.config(text="Start Voice-to-Text")
+
+    def listen_for_audio(self):
+        """Listens for audio and converts it to text."""
+        while self.is_listening:
+            try:
+                # Listen to the microphone with proper context management
+                with self.microphone as source:
+                    audio = self.recognizer.listen(source)
+                text = self.recognizer.recognize_google(audio)
+                self.text_area.insert(tk.END, text + " ")
+                self.text_area.yview(tk.END)  # Scroll to the end of the text area
+            except sr.UnknownValueError:
+                print("Could not understand the audio.")
+            except sr.RequestError:
+                print("Could not request results; check your network connection.")
+
+    def process_audio(self, recognizer, audio):
+        try:
+            # Attempt to recognize speech from the audio
+            text = recognizer.recognize_google(audio)
+            self.text_area.insert(tk.END, text + " ")
+            self.text_area.yview(tk.END)  # Scroll to the end of the text area
+        except sr.UnknownValueError:
+            print("Could not understand the audio.")
+        except sr.RequestError:
+            print("Could not request results; check your network connection.")
+
+    def get_device_list(self):
+        """Returns a list of available audio input devices with names."""
+        device_names = sr.Microphone.list_microphone_names()
+        # Filter out invalid or non-existent devices (those with empty names or None)
+        valid_devices = [name for name in device_names if name]
+        return valid_devices
+
+    def select_device(self, device_name):
+        """Selects a device for voice input based on the name."""
+        device_index = None
+        # Find the index of the selected device name
+        for index, name in enumerate(sr.Microphone.list_microphone_names()):
+            if name == device_name:
+                device_index = index
+                break
+        if device_index is not None:
+            selected_device = sr.Microphone(device_index=device_index)
+            self.microphone = selected_device
+
     def _on_drag_start(self, event):
         """Records the initial position for dragging."""
         self._drag_data["x"] = event.x
@@ -95,16 +165,16 @@ class StickyNote:
 class StickyNoteApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Sticky Notes UI - oxy")  # Title for main menu
+        self.root.title("Sticky Notes UI - oxy")
         self.root.geometry("300x200")
         
         # Set the application icon (replace with your icon path)
         self.root.iconbitmap("icon.ico")
 
-        # Make the main app window look like a sticky note launcher (no color changes)
-        tk.Button(root, text="New Note", command=self.create_note, bg="#d3d3d3").pack(fill=tk.X, pady=5)  # Light gray background
-        tk.Button(root, text="Open Note", command=self.open_note, bg="#d3d3d3").pack(fill=tk.X, pady=5)  # Light gray background
-        tk.Button(root, text="Quit", command=root.quit, bg="#d3d3d3").pack(fill=tk.X, pady=5)  # Light gray background
+        # Make the main app window look like a sticky note launcher
+        tk.Button(root, text="New Note", command=self.create_note, bg="#d3d3d3").pack(fill=tk.X, pady=5)
+        tk.Button(root, text="Open Note", command=self.open_note, bg="#d3d3d3").pack(fill=tk.X, pady=5)
+        tk.Button(root, text="Quit", command=root.quit, bg="#d3d3d3").pack(fill=tk.X, pady=5)
 
     def create_note(self):
         """Creates a new sticky note with a user-defined title."""        
